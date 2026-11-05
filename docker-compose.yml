@@ -1,5 +1,5 @@
-# Local stack for the marketing app: PostgreSQL and the backend. Keycloak and the AFS hub are not part of it,
-# so sign-in cannot complete here; the health check, migrations and the access-denied path can be checked.
+# Local stack for the marketing app: PostgreSQL, the API, the mail worker, and the web app.
+# Keycloak and the AFS hub are not part of it, so sign-in cannot complete here. Everything else can be checked.
 services:
   db:
     image: postgres:16
@@ -29,6 +29,23 @@ services:
       timeout: 6s
       retries: 10
       start_period: 15s
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    env_file: ./backend/.env.local
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8200:80"
 
 volumes:
   pgdata:

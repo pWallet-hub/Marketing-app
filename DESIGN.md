@@ -12,6 +12,8 @@ Status: draft for review. Independent application in the AFS collection. It has 
 
 ## Architecture
 
+The API and the web app share one public address. The web app proxies `/api` to the API, so one sign-in cookie covers both and the redirect URI is `https://<app>/api/auth/callback`.
+
 | Part | Choice |
 | --- | --- |
 | Backend | Python FastAPI, PostgreSQL (same stack family as the hub's backend; confirm before coding) |
