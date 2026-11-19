@@ -65,7 +65,7 @@ def hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def send_email(settings, *, to, subject, html, text, unsubscribe, one_click=None, idempotency_key):
+def send_email(settings, *, to, subject, html, text, unsubscribe, one_click=None, reply_to=None, idempotency_key):
     """Send one message through Resend. Returns Resend's message id. Raises MailError on failure.
 
     `unsubscribe` is the page linked in the footer; `one_click` is the address mail clients POST to. Without
@@ -80,6 +80,8 @@ def send_email(settings, *, to, subject, html, text, unsubscribe, one_click=None
         "html": html,
         "text": text,
     }
+    if reply_to:
+        body["reply_to"] = reply_to
     if one_click:
         # Lets mail clients show their own one-click unsubscribe button (RFC 8058).
         body["headers"] = {

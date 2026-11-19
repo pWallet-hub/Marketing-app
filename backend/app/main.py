@@ -10,6 +10,7 @@ from .deps import current_user
 from .hub import check_access
 from .oidc import router as oidc_router
 from .ratelimit import RateLimiter
+from .routes.admin import router as admin_router
 from .routes.campaigns import router as campaigns_router
 from .routes.contacts import router as contacts_router
 from .routes.library import router as library_router
@@ -70,4 +71,5 @@ def create_app(settings=None, access_check=None, users=None):
     app.include_router(public_router)
     app.include_router(one_click_router)
     app.include_router(webhooks_router)
+    app.include_router(admin_router)
     return app

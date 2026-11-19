@@ -5,6 +5,7 @@ import io
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
@@ -92,11 +93,34 @@ def list_contacts(
     q: str = "",
     type: str = "",
     status: str = "",
+    consent: str = "",
+    list_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
     user=Depends(ALL_ROLES),
 ):
     limit, offset = page_params(limit, offset)
+    clauses, params = _filters(q, type, status, consent, list_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    with connect(request.app.state.settings.database_url) as conn:
+        total = conn.execute(f"SELECT count(*) AS n FROM contacts {where}", params).fetchone()["n"]
+        rows = conn.execute(
+            f"SELECT contacts.*, {CONSENT_COLUMNS} FROM contacts {where}"
+            " ORDER BY lower(name), id LIMIT %s OFFSET %s",
+            params + [limit, offset],
+        ).fetchall()
+    return {"total": total, "items": rows, "limit": limit, "offset": offset}
+
+
+CONSENT_COLUMNS = (
+    "EXISTS (SELECT 1 FROM consents k WHERE k.contact_id = contacts.id AND k.purpose = 'marketing'"
+    " AND k.withdrawn_at IS NULL) AS marketing_consent,"
+    " EXISTS (SELECT 1 FROM consents k WHERE k.contact_id = contacts.id AND k.purpose = 'information_request'"
+    " AND k.withdrawn_at IS NULL) AS information_consent"
+)
+
+
+def _filters(q, type, status, consent, list_id):
     clauses, params = [], []
     if q:
         clauses.append("(email ILIKE %s OR name ILIKE %s OR organisation ILIKE %s)")
@@ -107,13 +131,47 @@ def list_contacts(
     if status:
         clauses.append("status = %s")
         params.append(status)
+    if consent in PURPOSES:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM consents k WHERE k.contact_id = contacts.id AND k.purpose = %s AND k.withdrawn_at IS NULL)"
+        )
+        params.append(consent)
+    if list_id:
+        clauses.append("EXISTS (SELECT 1 FROM list_members m WHERE m.contact_id = contacts.id AND m.list_id = %s)")
+        params.append(list_id)
+    return clauses, params
+
+
+@router.get("/export")
+def export_contacts(
+    request: Request, q: str = "", type: str = "", status: str = "", consent: str = "", list_id: int | None = None,
+    user=Depends(ADMIN),
+):
+    """Download the contacts that match the filters as CSV (the same columns the import reads, plus status and consent)."""
+    clauses, params = _filters(q, type, status, consent, list_id)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     with connect(request.app.state.settings.database_url) as conn:
-        total = conn.execute(f"SELECT count(*) AS n FROM contacts {where}", params).fetchone()["n"]
         rows = conn.execute(
-            f"SELECT * FROM contacts {where} ORDER BY lower(name), id LIMIT %s OFFSET %s", params + [limit, offset]
+            f"SELECT contacts.*, {CONSENT_COLUMNS} FROM contacts {where} ORDER BY lower(name), id", params
         ).fetchall()
-    return {"total": total, "items": rows, "limit": limit, "offset": offset}
+        audit(conn, user, "contacts.exported", "", {"count": len(rows)})
+    out = io.StringIO()
+    columns = ["email", "name", "organisation", "phone", "type", "status", "marketing_consent", "information_consent", "notes", "created_at"]
+    writer = csv.writer(out)
+    writer.writerow(columns)
+    for row in rows:
+        # A leading = + - @ would run as a formula when the file is opened in a spreadsheet.
+        writer.writerow([_cell(row[column]) for column in columns])
+    return Response(
+        out.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="afs-contacts.csv"'},
+    )
+
+
+def _cell(value):
+    text = "" if value is None else ("yes" if value is True else "no" if value is False else str(value))
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
 @router.post("", status_code=201)
@@ -153,14 +211,27 @@ def get_contact(contact_id: int, request: Request, user=Depends(ALL_ROLES)):
             (contact_id,),
         ).fetchall()
         sends = conn.execute(
-            "SELECT s.id, s.campaign_id, c.name AS campaign, s.status, s.skip_reason, s.sent_at"
+            "SELECT s.id, s.campaign_id, c.name AS campaign, s.status, s.skip_reason, s.sent_at, s.opened_at, s.clicked_at"
             " FROM sends s JOIN campaigns c ON c.id = s.campaign_id WHERE s.contact_id = %s ORDER BY s.id DESC LIMIT 50",
             (contact_id,),
         ).fetchall()
         suppressions = conn.execute(
             "SELECT purpose, reason, created_at FROM suppressions WHERE lower(email) = lower(%s)", (contact["email"],)
         ).fetchall()
-    return {**contact, "consents": consents, "lists": lists, "sends": sends, "suppressions": suppressions}
+        activity = conn.execute(
+            "SELECT e.type, e.link, e.at, s.campaign_id, c.name AS campaign FROM send_events e"
+            " JOIN sends s ON s.id = e.send_id JOIN campaigns c ON c.id = s.campaign_id"
+            " WHERE s.contact_id = %s ORDER BY e.at DESC LIMIT 50",
+            (contact_id,),
+        ).fetchall()
+    return {
+        **contact,
+        "consents": consents,
+        "lists": lists,
+        "sends": sends,
+        "suppressions": suppressions,
+        "activity": activity,
+    }
 
 
 @router.patch("/{contact_id}")

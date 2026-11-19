@@ -45,6 +45,11 @@ class Settings:
     # Where submitted information forms are forwarded. Empty means they are stored here only.
     form_target_url: str = ""
     form_target_token: str = ""
+    # Branding for the email layout. The postal address in the footer is expected in marketing email.
+    org_name: str = "Alliance for Science Rwanda"
+    org_address: str = ""
+    org_website: str = ""
+    brand_color: str = "#1f5fbf"
     # Public pages (unsubscribe, forms): requests per minute per client, and how many proxies append to
     # X-Forwarded-For in front of the API (1 = nginx only; 2 = Traefik and nginx, as on Coolify).
     public_rate_limit: int = 30
@@ -64,6 +69,19 @@ class Settings:
     @property
     def redirect_uri(self):
         return f"{self.public_base_url.rstrip('/')}/api/auth/callback"
+
+    def layout(self, body_html, preheader="", footer_html=""):
+        from .render import email_layout
+
+        return email_layout(
+            body_html,
+            org_name=self.org_name,
+            brand_color=self.brand_color,
+            org_address=self.org_address,
+            org_website=self.org_website,
+            preheader=preheader,
+            footer_html=footer_html,
+        )
 
     @property
     def mail_configured(self):
@@ -100,6 +118,10 @@ class Settings:
             biocap_account_token=_optional("BIOCAP_ACCOUNT_TOKEN"),
             form_target_url=_optional("FORM_TARGET_URL"),
             form_target_token=_optional("FORM_TARGET_TOKEN"),
+            org_name=_optional("ORG_NAME", "Alliance for Science Rwanda"),
+            org_address=_optional("ORG_ADDRESS"),
+            org_website=_optional("ORG_WEBSITE"),
+            brand_color=_optional("BRAND_COLOR", "#1f5fbf"),
             public_rate_limit=int(_optional("PUBLIC_RATE_LIMIT", "30")),
             trusted_proxy_hops=max(1, int(_optional("TRUSTED_PROXY_HOPS", "1"))),
             send_log_retention_days=int(_optional("SEND_LOG_RETENTION_DAYS", "0")),

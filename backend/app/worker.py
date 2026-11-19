@@ -5,7 +5,7 @@ import time
 
 from .config import Settings
 from .db import migrate
-from .queue import process_once
+from .queue import process_once, start_due_campaigns
 from .retention import apply_retention
 
 IDLE_SECONDS = 15
@@ -28,6 +28,7 @@ def main():
                 log.exception("retention pass failed")
             next_retention = time.monotonic() + RETENTION_EVERY_SECONDS
         try:
+            start_due_campaigns(settings)
             handled = process_once(settings)
         except Exception:  # keep the worker alive; the error is logged with its traceback
             log.exception("queue pass failed")

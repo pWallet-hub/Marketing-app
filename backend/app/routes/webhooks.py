@@ -1,4 +1,4 @@
-"""Delivery events from Resend (delivered, bounced, complained, failed).
+"""Delivery events from Resend (delivered, opened, clicked, bounced, complained, failed).
 
 Requests must carry a valid Svix signature, so only Resend can change a send's status. A bounce or complaint stops all
 mail to that address, because continuing would harm the sending domain's reputation.
@@ -41,10 +41,35 @@ async def resend_event(request: Request):
         if send is None:
             return {"ok": True, "ignored": True}
         if kind == "email.delivered":
-            conn.execute("UPDATE sends SET status = 'delivered' WHERE id = %s", (send["id"],))
+            # An open can arrive before the delivery report; neither moves a bounced send back.
+            conn.execute(
+                "UPDATE sends SET status = CASE WHEN status = 'sent' THEN 'delivered' ELSE status END,"
+                " delivered_at = coalesce(delivered_at, now()) WHERE id = %s",
+                (send["id"],),
+            )
+            _event(conn, send, "delivered")
+            return {"ok": True}
+        elif kind == "email.opened":
+            conn.execute(
+                "UPDATE sends SET opened_at = coalesce(opened_at, now()), open_count = open_count + 1 WHERE id = %s",
+                (send["id"],),
+            )
+            _event(conn, send, "opened")
+            return {"ok": True}
+        elif kind == "email.clicked":
+            link = str((data.get("click") or {}).get("link") or "")[:2000] or None
+            # A click proves the email was opened, even when images (the open pixel) were blocked.
+            conn.execute(
+                "UPDATE sends SET clicked_at = coalesce(clicked_at, now()), click_count = click_count + 1,"
+                " opened_at = coalesce(opened_at, now()), open_count = greatest(open_count, 1) WHERE id = %s",
+                (send["id"],),
+            )
+            _event(conn, send, "clicked", link)
+            return {"ok": True}
         elif kind == "email.bounced":
             conn.execute("UPDATE sends SET status = 'bounced', error = 'bounced' WHERE id = %s", (send["id"],))
-            _stop_mail(conn, send, "bounced", "contacts")
+            _event(conn, send, "bounced")
+            _stop_mail(conn, send, "bounced", "bounced")
         elif kind == "email.complained":
             conn.execute("UPDATE sends SET status = 'complained', error = 'complaint' WHERE id = %s", (send["id"],))
             _stop_mail(conn, send, "complained", "complaint")
@@ -55,6 +80,10 @@ async def resend_event(request: Request):
             (f"mail.{kind}", f"send:{send['id']}", Jsonb({"message_id": message_id})),
         )
     return {"ok": True}
+
+
+def _event(conn, send, kind, link=None):
+    conn.execute("INSERT INTO send_events (send_id, type, link) VALUES (%s, %s, %s)", (send["id"], kind, link))
 
 
 def _stop_mail(conn, send, status, reason):

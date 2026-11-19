@@ -5,6 +5,17 @@ import { Field, Loading, Notice } from '../ui.jsx';
 
 // These pages are opened from emails, so they do not need a sign-in.
 
+function PublicPage({ children }) {
+  return (
+    <div className="public-page">
+      <div className="public">
+        <div className="public-brand"><span className="brand-mark">AFS</span>Alliance for Science Rwanda</div>
+        <div className="card">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function Unsubscribe() {
   const { token } = useParams();
   const [status, setStatus] = useState('ready'); // ready | working | done | error
@@ -22,7 +33,7 @@ export function Unsubscribe() {
   }
 
   return (
-    <div className="public">
+    <PublicPage>
       <h1>Unsubscribe</h1>
       {status === 'ready' && (
         <>
@@ -33,7 +44,7 @@ export function Unsubscribe() {
       {status === 'working' && <Loading label="Updating your preferences…" />}
       {status === 'done' && <Notice kind="success">You have been unsubscribed. You will not receive these emails again.</Notice>}
       {status === 'error' && <Notice kind="error">{message}</Notice>}
-    </div>
+    </PublicPage>
   );
 }
 
@@ -85,11 +96,11 @@ export function InfoForm() {
   }
 
   if (loading) return <Loading />;
-  if (done) return <div className="public"><Notice kind="success">Thank you. Your details have been received.</Notice></div>;
-  if (!form) return <div className="public"><Notice kind="error">{error}</Notice></div>;
+  if (done) return <PublicPage><Notice kind="success">Thank you. Your details have been received.</Notice></PublicPage>;
+  if (!form) return <PublicPage><Notice kind="error">{error}</Notice></PublicPage>;
 
   return (
-    <div className="public">
+    <PublicPage>
       <h1>Update your details</h1>
       <p>Please check and complete the details below. This link can be used once.</p>
       {error && <Notice kind="error">{error}</Notice>}
@@ -103,6 +114,6 @@ export function InfoForm() {
         ))}
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Submit'}</button>
       </form>
-    </div>
+    </PublicPage>
   );
 }

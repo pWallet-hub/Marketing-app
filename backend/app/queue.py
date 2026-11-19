@@ -7,6 +7,8 @@ reason. The worker picks queued rows, sends them one at a time, and records the 
 import logging
 import time
 
+from psycopg.types.json import Jsonb
+
 from .db import connect
 from .mail import (
     MailError,
@@ -69,12 +71,53 @@ def enqueue(conn, campaign_id, purpose, contacts):
 def _footer(unsubscribe, purpose):
     label = PURPOSE_LABELS[purpose]
     html = (
-        '<hr style="border:none;border-top:1px solid #ddd;margin:24px 0 12px">'
-        f'<p style="font-size:12px;color:#666">You are receiving this because you agreed to receive {label}. '
-        f'<a href="{unsubscribe}">Unsubscribe</a>.</p>'
+        f'<div style="margin-top:12px">You are receiving this because you agreed to receive {label}.<br>'
+        f'<a href="{unsubscribe}" style="color:#6b7280">Unsubscribe</a></div>'
     )
-    text = f"\n\nYou are receiving this because you agreed to receive {label}.\nUnsubscribe: {unsubscribe}"
+    text = f"\n\n--\nYou are receiving this because you agreed to receive {label}.\nUnsubscribe: {unsubscribe}"
     return html, text
+
+
+def campaign_recipients(conn, campaign):
+    """The contacts a campaign goes to: its list, or its single contact (media invites)."""
+    if campaign["list_id"] is not None:
+        return conn.execute(
+            "SELECT c.* FROM list_members m JOIN contacts c ON c.id = m.contact_id WHERE m.list_id = %s ORDER BY c.id",
+            (campaign["list_id"],),
+        ).fetchall()
+    return conn.execute("SELECT * FROM contacts WHERE id = %s", (campaign["single_contact_id"],)).fetchall()
+
+
+def start_campaign(conn, campaign):
+    """Fix the recipients and queue the campaign. Returns (queued, skipped)."""
+    queued, skipped = enqueue(conn, campaign["id"], campaign["purpose"], campaign_recipients(conn, campaign))
+    conn.execute(
+        "UPDATE campaigns SET status = 'sending', sent_at = now(), scheduled_for = NULL, updated_at = now() WHERE id = %s",
+        (campaign["id"],),
+    )
+    return queued, skipped
+
+
+def start_due_campaigns(settings):
+    """Start scheduled campaigns whose time has come. Waits while mail is not configured. Returns how many started."""
+    if not settings.mail_configured:
+        return 0
+    started = 0
+    with connect(settings.database_url) as conn:
+        due = conn.execute(
+            "SELECT * FROM campaigns WHERE status = 'scheduled' AND scheduled_for <= now()"
+            " ORDER BY scheduled_for FOR UPDATE SKIP LOCKED"
+        ).fetchall()
+        for campaign in due:
+            queued, skipped = start_campaign(conn, campaign)
+            conn.execute(
+                "INSERT INTO audit_log (actor_sub, actor_email, action, target, detail)"
+                " VALUES ('scheduler', '', 'campaign.sent', %s, %s)",
+                (f"campaign:{campaign['id']}", Jsonb({"queued": queued, "skipped": skipped, "scheduled": True})),
+            )
+            log.info("scheduled campaign %s started: %s queued, %s skipped", campaign["id"], queued, skipped)
+            started += 1
+    return started
 
 
 def process_once(settings, batch_size=20):
@@ -85,7 +128,7 @@ def process_once(settings, batch_size=20):
     with connect(settings.database_url) as conn:
         rows = conn.execute(
             "SELECT s.id, s.email, s.attempts, c.id AS contact_id, c.name, c.organisation, c.type,"
-            " camp.id AS campaign_id, camp.purpose, t.subject, t.body_html"
+            " camp.id AS campaign_id, camp.purpose, camp.reply_to, t.subject, t.body_html, t.preheader"
             " FROM sends s"
             " JOIN contacts c ON c.id = s.contact_id"
             " JOIN campaigns camp ON camp.id = s.campaign_id"
@@ -114,7 +157,7 @@ def process_once(settings, batch_size=20):
 
             footer_html, footer_text = _footer(unsub, row["purpose"])
             body = render(row["body_html"], values, html=True)
-            html = body + footer_html
+            html = settings.layout(body, preheader=render(row["preheader"], values, html=False), footer_html=footer_html)
             text = html_to_text(body) + footer_text
             subject = render(row["subject"], values, html=False)
             attempts = row["attempts"] + 1
@@ -127,6 +170,7 @@ def process_once(settings, batch_size=20):
                     text=text,
                     unsubscribe=unsub,
                     one_click=one_click_unsubscribe_url(settings, row["contact_id"], row["purpose"]),
+                    reply_to=row["reply_to"] or None,
                     idempotency_key=f"send-{row['id']}",
                 )
                 conn.execute(
