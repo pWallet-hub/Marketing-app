@@ -16,6 +16,9 @@ Design: [DESIGN.md](DESIGN.md). Deployment with Command Center: [deployment.md](
 - **Information forms**: one-time links (30 days, only a hash stored). A submission updates the contact and is forwarded to the target system when one is configured.
 - **Media invite**: creates the person's blog account when Biocap is configured, then sends the invite. Requires marketing consent.
 - **Audit log**: every change is recorded with the signed-in person.
+- **Deleting a contact** (admins, for data-protection requests): removes the contact and everything held about them. By default the address stays on the do-not-contact list so an old import cannot add them back.
+- **Rate limits** on the public unsubscribe and form pages (`PUBLIC_RATE_LIMIT` per minute per client; `TRUSTED_PROXY_HOPS` must match the proxies in front, 2 on Coolify).
+- **Retention**: the worker removes expired form links, and send records and form submissions older than `SEND_LOG_RETENTION_DAYS` / `FORM_SUBMISSION_RETENTION_DAYS` once those are set (0 keeps them).
 
 ## Layout
 
@@ -29,7 +32,7 @@ Design: [DESIGN.md](DESIGN.md). Deployment with Command Center: [deployment.md](
 
 ## Run locally
 
-Local values are in `backend/.env.local`. They are for this machine only. Real deployments use Coolify variables, as `backend/.env.example` shows.
+Local values are in `backend/.env.local` (gitignored; copy the variable names from `backend/.env.example` and use local values). They are for this machine only. Real deployments use Coolify variables, as `backend/.env.example` shows.
 
 ```bash
 docker compose up -d --build
@@ -46,9 +49,9 @@ The database tests need a separate database, so they never touch the local data:
 
 ```bash
 docker compose exec db psql -U marketing -d marketing -c "CREATE DATABASE marketing_test"
-docker run --rm --network marketing-mailer_default \
+docker run --rm --network marketing-app_default \
   -e TEST_DATABASE_URL=postgresql://marketing:marketing-local@db:5432/marketing_test \
-  -v "$PWD/backend/tests":/app/tests:ro marketing-mailer-backend \
+  -v "$PWD/backend/tests":/app/tests:ro marketing-app-backend \
   python -m pytest -q tests
 ```
 
@@ -63,6 +66,15 @@ See `docs/integrations/deployment.md` in the AFS hub. In short:
 3. In Coolify, deploy this app as two services (API and web app) on one domain, plus the worker. The API handles `/api`, and the web app handles everything else.
 4. Set the environment from `backend/.env.example`, including the Resend key and sending domain, the Resend webhook secret, and the Biocap and form-target settings when they are ready.
 
+## Production
+
+- `docker-compose.prod.yml` sets `ENVIRONMENT=production`. The API and the worker then refuse to start with placeholder or short secrets, a weak database password, plain-HTTP addresses, or Resend configured without its webhook secret. The deploy log lists every problem.
+- Emails carry a one-click `List-Unsubscribe` header (RFC 8058) that points to `/api/public/unsubscribe/<token>`. Gmail and Yahoo require this for bulk mail.
+- Unsubscribe links are signed with `SESSION_SECRET`. Changing it signs everyone out and breaks the unsubscribe links in emails already sent, so keep it stable.
+- The `backup` service writes a `pg_dump` every day to the `backups` volume and keeps 14 days. Copy that volume off the server as well; the restore command is in the compose file.
+- The Resend webhook is `https://<app>/api/webhooks/resend` (events: delivered, bounced, complained, failed).
+- The API runs as one process. The rate limiter keeps its counts in memory, so keep it to one replica.
+
 ## Not done yet
 
 These need a decision or another team's work before the app is used with real people:
@@ -72,7 +84,6 @@ These need a decision or another team's work before the app is used with real pe
 - **Biocap blog accounts**: Biocap has no endpoint that accepts this app's token. Until it does, invites go out without an account and are marked `not_configured`.
 - **Media joining through the hub**: linking a contact to their account when they join in Command Center is not built. It needs an event from the hub.
 - **Form forwarding**: the target system is not chosen. Submissions are stored until it is.
-- **Deleting a contact** (for data-protection requests): not built.
-- **Retention**: no automatic deletion of old send logs or form submissions.
-- **Rate limits** on the public unsubscribe and form endpoints.
+- **Retention period**: the deletion is built, but the number of days is not decided. Until it is set, send records and form submissions are kept.
+- **Biocap blog accounts on deletion**: deleting a contact does not remove their Biocap account; the app shows its id so it can be removed in Biocap.
 - **Browser testing** of the screens while signed in.

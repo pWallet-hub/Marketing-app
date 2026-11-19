@@ -5,6 +5,8 @@
 # serves the app and proxies /api to the backend, so the SSO callback and the session cookie stay on that address.
 # Deploy AFS Command Center first: it creates the shared `afs-internal` network the backend joins.
 x-backend-env: &backend-env
+  # Refuses to start with placeholder secrets or plain-HTTP addresses (backend/app/production.py).
+  ENVIRONMENT: production
   DATABASE_URL: postgresql://marketing:${POSTGRES_PASSWORD}@db:5432/marketing
   SESSION_SECRET: ${SESSION_SECRET}
   SESSION_HTTPS_ONLY: "true"
@@ -32,6 +34,13 @@ x-backend-env: &backend-env
   BIOCAP_ACCOUNT_TOKEN: ${BIOCAP_ACCOUNT_TOKEN:-}
   FORM_TARGET_URL: ${FORM_TARGET_URL:-}
   FORM_TARGET_TOKEN: ${FORM_TARGET_TOKEN:-}
+  # Public pages (unsubscribe, forms): requests per minute per client. Coolify's Traefik and this app's nginx each add
+  # an X-Forwarded-For entry, so the client is 2 from the end. Add one for each further proxy (e.g. Cloudflare).
+  PUBLIC_RATE_LIMIT: ${PUBLIC_RATE_LIMIT:-30}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-2}
+  # Days to keep send records and form submissions; 0 keeps them. Set once the retention period is decided.
+  SEND_LOG_RETENTION_DAYS: ${SEND_LOG_RETENTION_DAYS:-0}
+  FORM_SUBMISSION_RETENTION_DAYS: ${FORM_SUBMISSION_RETENTION_DAYS:-0}
 
 services:
   db:
@@ -76,6 +85,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Daily pg_dump into the `backups` volume, keeping 14 days. It protects against mistakes (a wrong import or delete),
+  # not against losing the server: copy the volume off the host as well. Restore:
+  #   docker compose exec -T db pg_restore -U marketing -d marketing --clean --if-exists < marketing-YYYY-MM-DD.dump
+  backup:
+    image: postgres:16
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          day=$$(date +%F)
+          if pg_dump -h db -U marketing -d marketing -Fc -f /backups/partial.dump; then
+            mv /backups/partial.dump /backups/marketing-$$day.dump && echo "backup written: $$day"
+          else
+            echo "backup FAILED: $$day"
+          fi
+          find /backups -name 'marketing-*.dump' -mtime +14 -delete
+          sleep 86400
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     expose: ["80"]
@@ -92,3 +129,4 @@ networks:
 
 volumes:
   pgdata:
+  backups:

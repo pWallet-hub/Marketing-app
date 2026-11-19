@@ -8,7 +8,15 @@ import logging
 import time
 
 from .db import connect
-from .mail import MailError, form_url, new_form_token, form_expiry, send_email, unsubscribe_url
+from .mail import (
+    MailError,
+    form_expiry,
+    form_url,
+    new_form_token,
+    one_click_unsubscribe_url,
+    send_email,
+    unsubscribe_url,
+)
 from .render import html_to_text, render
 
 log = logging.getLogger("marketing.queue")
@@ -118,6 +126,7 @@ def process_once(settings, batch_size=20):
                     html=html,
                     text=text,
                     unsubscribe=unsub,
+                    one_click=one_click_unsubscribe_url(settings, row["contact_id"], row["purpose"]),
                     idempotency_key=f"send-{row['id']}",
                 )
                 conn.execute(

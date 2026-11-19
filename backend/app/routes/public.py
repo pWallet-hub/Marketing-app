@@ -7,15 +7,16 @@ the same message whatever the reason, so the endpoints do not reveal which addre
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from psycopg.types.json import Jsonb
 
 from ..db import connect
 from ..mail import hash_token, read_unsubscribe_token
+from ..ratelimit import limit_public
 
-router = APIRouter(prefix="/api/public", tags=["public"])
+router = APIRouter(prefix="/api/public", tags=["public"], dependencies=[Depends(limit_public)])
 INVALID = "This link is no longer valid."
 FIELDS = ["name", "organisation", "position", "phone", "procurement_contact", "notes"]
 
@@ -35,8 +36,23 @@ class FormIn(BaseModel):
 
 @router.post("/unsubscribe")
 def unsubscribe(body: UnsubscribeIn, request: Request):
-    settings = request.app.state.settings
-    data = read_unsubscribe_token(settings, body.token)
+    return _unsubscribe(request.app.state.settings, body.token)
+
+
+# Mail clients (Gmail, Yahoo, Apple Mail) send their one-click unsubscribe here, from a few shared servers. The link is
+# signed, so it cannot be guessed, and it is not rate-limited, so a busy day of unsubscribes is never refused.
+one_click_router = APIRouter(prefix="/api/public", tags=["public"])
+
+
+@one_click_router.post("/unsubscribe/{token}")
+def one_click_unsubscribe(token: str, request: Request):
+    if len(token) > 500:
+        raise HTTPException(status_code=400, detail=INVALID)
+    return _unsubscribe(request.app.state.settings, token)
+
+
+def _unsubscribe(settings, token):
+    data = read_unsubscribe_token(settings, token)
     if data is None:
         raise HTTPException(status_code=400, detail=INVALID)
     purpose = data["p"]

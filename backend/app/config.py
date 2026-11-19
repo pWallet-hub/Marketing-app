@@ -45,6 +45,13 @@ class Settings:
     # Where submitted information forms are forwarded. Empty means they are stored here only.
     form_target_url: str = ""
     form_target_token: str = ""
+    # Public pages (unsubscribe, forms): requests per minute per client, and how many proxies append to
+    # X-Forwarded-For in front of the API (1 = nginx only; 2 = Traefik and nginx, as on Coolify).
+    public_rate_limit: int = 30
+    trusted_proxy_hops: int = 1
+    # Days to keep send records and form submissions. 0 keeps them (the period is not decided yet).
+    send_log_retention_days: int = 0
+    form_submission_retention_days: int = 0
 
     @property
     def issuer(self):
@@ -64,6 +71,9 @@ class Settings:
 
     @classmethod
     def from_env(cls):
+        from .production import assert_production_ready
+
+        assert_production_ready()
         secret = _required("SESSION_SECRET")
         if len(secret) < 32:
             raise RuntimeError("SESSION_SECRET must be at least 32 characters")
@@ -90,4 +100,8 @@ class Settings:
             biocap_account_token=_optional("BIOCAP_ACCOUNT_TOKEN"),
             form_target_url=_optional("FORM_TARGET_URL"),
             form_target_token=_optional("FORM_TARGET_TOKEN"),
+            public_rate_limit=int(_optional("PUBLIC_RATE_LIMIT", "30")),
+            trusted_proxy_hops=max(1, int(_optional("TRUSTED_PROXY_HOPS", "1"))),
+            send_log_retention_days=int(_optional("SEND_LOG_RETENTION_DAYS", "0")),
+            form_submission_retention_days=int(_optional("FORM_SUBMISSION_RETENTION_DAYS", "0")),
         )

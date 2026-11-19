@@ -132,6 +132,7 @@ def test_worker_sends_with_unsubscribe_headers_and_completes_campaign(admin, fak
     assert message["subject"] == "Hello Sam"
     assert "Unsubscribe" in message["html"]
     assert message["unsubscribe"].startswith("https://marketing.example.org/unsubscribe/")
+    assert message["one_click"].startswith("https://marketing.example.org/api/public/unsubscribe/")
     detail = admin.get(f"/api/campaigns/{campaign['id']}").json()
     assert detail["status"] == "done"
     assert detail["counts"] == {"sent": 1}
@@ -323,3 +324,85 @@ def test_audit_log_records_changes(admin):
 def test_template_with_unknown_placeholder_is_refused(admin):
     response = admin.post("/api/templates", json={"name": "Bad", "subject": "Hi", "body_html": "{{password}}"})
     assert response.status_code == 422
+
+
+def test_public_pages_are_rate_limited(db):
+    client = build_client(make_settings(public_rate_limit=3), "admin")
+    codes = [client.post("/api/public/unsubscribe", json={"token": "tampered-token-value"}).status_code for _ in range(4)]
+    assert codes == [400, 400, 400, 429]
+
+
+def test_erasing_a_contact_removes_their_records_and_keeps_them_suppressed(admin, fake_resend):
+    contact = make_contact(admin, "erase-me@example.org", type="media")
+    grant(admin, contact["id"])
+    group = make_list(admin)
+    add_to_list(admin, group["id"], [contact["id"]])
+    template = make_template(admin)
+    assert admin.post(f"/api/contacts/{contact['id']}/invite?template_id={template['id']}").status_code == 201
+
+    response = admin.post(f"/api/contacts/{contact['id']}/erase", json={})
+    assert response.status_code == 200, response.text
+    assert admin.get(f"/api/contacts/{contact['id']}").status_code == 404
+    with connect(admin.app.state.settings.database_url) as conn:
+        for table, column in (("consents", "contact_id"), ("list_members", "contact_id"), ("sends", "contact_id")):
+            assert conn.execute(f"SELECT count(*) AS n FROM {table} WHERE {column} = %s", (contact["id"],)).fetchone()["n"] == 0
+        assert conn.execute("SELECT count(*) AS n FROM campaigns WHERE single_contact_id = %s", (contact["id"],)).fetchone()["n"] == 0
+        audit = conn.execute("SELECT detail::text AS d FROM audit_log WHERE action = 'contact.erased'").fetchone()
+        assert "erase-me" not in audit["d"]
+
+    again = make_contact(admin, "erase-me@example.org")
+    response = admin.post(f"/api/contacts/{again['id']}/consent", json={"purpose": "marketing", "source": "Old CSV"})
+    assert response.status_code == 409
+
+
+def test_erasing_without_suppression_forgets_the_address(admin):
+    contact = make_contact(admin, "forget-me@example.org")
+    assert admin.post(f"/api/contacts/{contact['id']}/erase", json={"suppress": False}).status_code == 200
+    again = make_contact(admin, "forget-me@example.org")
+    grant(admin, again["id"])
+
+
+def test_members_cannot_erase_contacts(admin, member):
+    contact = make_contact(admin, "kept@example.org")
+    assert member.post(f"/api/contacts/{contact['id']}/erase", json={}).status_code == 403
+
+
+def test_retention_removes_old_records_only_when_a_period_is_set(admin, fake_resend):
+    from app.retention import apply_retention
+
+    contact = make_contact(admin, "old@example.org")
+    grant(admin, contact["id"])
+    group = make_list(admin)
+    add_to_list(admin, group["id"], [contact["id"]])
+    template = make_template(admin)
+    campaign = admin.post(
+        "/api/campaigns", json={"name": "Old", "template_id": template["id"], "list_id": group["id"], "purpose": "marketing"}
+    ).json()
+    admin.post(f"/api/campaigns/{campaign['id']}/send")
+    process_once(admin.app.state.settings)
+    with connect(admin.app.state.settings.database_url) as conn:
+        conn.execute("UPDATE sends SET created_at = now() - interval '400 days'")
+        conn.execute("INSERT INTO form_submissions (contact_id, payload, created_at) VALUES (%s, '{}', now() - interval '400 days')", (contact["id"],))
+
+    kept = apply_retention(admin.app.state.settings)
+    assert "sends" not in kept and "form_submissions" not in kept
+
+    removed = apply_retention(make_settings(send_log_retention_days=365, form_submission_retention_days=365))
+    assert removed["sends"] == 1 and removed["form_submissions"] == 1
+
+
+def test_one_click_unsubscribe_from_a_mail_client(admin):
+    settings = admin.app.state.settings
+    contact = make_contact(admin, "oneclick@example.org")
+    grant(admin, contact["id"])
+    client = build_client(make_settings(public_rate_limit=1), "admin")
+    token = unsubscribe_token(settings, contact["id"], "marketing")
+    for _ in range(3):  # never rate-limited, and repeating it is harmless
+        response = client.post(
+            f"/api/public/unsubscribe/{token}",
+            content="List-Unsubscribe=One-Click",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert response.status_code == 200
+    assert admin.get(f"/api/contacts/{contact['id']}").json()["status"] == "unsubscribed"
+    assert client.post("/api/public/unsubscribe/not-a-real-token-value").status_code == 400

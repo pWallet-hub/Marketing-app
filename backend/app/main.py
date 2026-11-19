@@ -9,9 +9,11 @@ from .db import migrate
 from .deps import current_user
 from .hub import check_access
 from .oidc import router as oidc_router
+from .ratelimit import RateLimiter
 from .routes.campaigns import router as campaigns_router
 from .routes.contacts import router as contacts_router
 from .routes.library import router as library_router
+from .routes.public import one_click_router
 from .routes.public import router as public_router
 from .routes.webhooks import router as webhooks_router
 from .users import PostgresUserStore
@@ -50,6 +52,7 @@ def create_app(settings=None, access_check=None, users=None):
     app.state.settings = settings
     app.state.access_check = access_check or check_access
     app.state.users = users or PostgresUserStore(settings.database_url)
+    app.state.public_limiter = RateLimiter(settings.public_rate_limit)
     app.state.jwks = jwt.PyJWKClient(f"{settings.internal_realm_url}/protocol/openid-connect/certs")
     app.add_middleware(
         SessionMiddleware,
@@ -65,5 +68,6 @@ def create_app(settings=None, access_check=None, users=None):
     app.include_router(library_router)
     app.include_router(campaigns_router)
     app.include_router(public_router)
+    app.include_router(one_click_router)
     app.include_router(webhooks_router)
     return app

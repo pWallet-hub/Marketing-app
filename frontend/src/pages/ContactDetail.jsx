@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useUser } from '../session.js';
 import { Badge, Field, Loading, Notice, formatDate, useLoader } from '../ui.jsx';
@@ -12,6 +12,24 @@ export default function ContactDetail() {
   const [message, setMessage] = useState({ kind: '', text: '' });
   const [consentSource, setConsentSource] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [keepSuppressed, setKeepSuppressed] = useState(true);
+  const navigate = useNavigate();
+
+  async function erase() {
+    const label = contact.name || contact.email;
+    if (!window.confirm(`Delete ${label} and everything held about them? This cannot be undone.`)) return;
+    setMessage({ kind: '', text: '' });
+    try {
+      const result = await api(`/contacts/${id}/erase`, { method: 'POST', body: { suppress: keepSuppressed } });
+      const note = result.blog_account_id
+        ? ` Their Biocap blog account (${result.blog_account_id}) still exists; remove it in Biocap if it should go too.`
+        : '';
+      window.alert(`${label} was deleted.${note}`);
+      navigate('/contacts');
+    } catch (err) {
+      setMessage({ kind: 'error', text: err.message });
+    }
+  }
 
   async function run(action, success) {
     setMessage({ kind: '', text: '' });
@@ -113,6 +131,23 @@ export default function ContactDetail() {
           </table>
         )}
       </section>
+
+      {user.isAdmin && (
+        <section className="card">
+          <h2>Delete this contact</h2>
+          <p className="muted">
+            For a data-protection request. Removes the contact, their consent records, list memberships, emails sent to
+            them and form answers. The audit log keeps that the contact was deleted, without their details.
+          </p>
+          <label className="row">
+            <input type="checkbox" checked={keepSuppressed} onChange={(e) => setKeepSuppressed(e.target.checked)} />
+            <span>Keep the email address on the do-not-contact list, so a later import cannot add them back</span>
+          </label>
+          <div className="actions">
+            <button className="btn btn-danger" onClick={erase}>Delete contact</button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

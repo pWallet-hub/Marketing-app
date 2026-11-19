@@ -49,6 +49,11 @@ class WithdrawIn(BaseModel):
     purpose: Literal["marketing", "information_request"]
 
 
+class EraseIn(BaseModel):
+    # Keep the address on the do-not-contact list so an old import cannot add the person back with consent.
+    suppress: bool = True
+
+
 class ImportIn(BaseModel):
     csv: str = Field(min_length=1)
     type: Literal["media", "partner", "staff"]
@@ -195,6 +200,37 @@ def withdraw_consent(contact_id: int, body: WithdrawIn, request: Request, user=D
         )
         audit(conn, user, "consent.withdrawn", f"contact:{contact_id}", {"purpose": body.purpose})
     return {"ok": True}
+
+
+@router.post("/{contact_id}/erase")
+def erase_contact(contact_id: int, body: EraseIn, request: Request, user=Depends(ADMIN)):
+    """Delete a contact and everything held about them (data-protection request).
+
+    Removes the contact, their consents, list memberships, send records, form links and form submissions, and their
+    one-person invite campaigns. With `suppress` (the default) only the address is kept, on the suppression list, so
+    they are never mailed again. The audit log keeps the action against the contact's number, not their details.
+    A Biocap blog account, if one was created, is not removed here; the response returns its id so it can be.
+    """
+    with connect(request.app.state.settings.database_url) as conn:
+        contact = _contact(conn, contact_id)
+        if body.suppress:
+            conn.execute(
+                "INSERT INTO suppressions (email, purpose, reason) VALUES (lower(%s), 'all', 'erased')"
+                " ON CONFLICT (email, purpose) DO NOTHING",
+                (contact["email"],),
+            )
+        else:
+            conn.execute("DELETE FROM suppressions WHERE lower(email) = lower(%s)", (contact["email"],))
+        conn.execute("DELETE FROM campaigns WHERE single_contact_id = %s", (contact_id,))
+        conn.execute("DELETE FROM contacts WHERE id = %s", (contact_id,))
+        audit(
+            conn,
+            user,
+            "contact.erased",
+            f"contact:{contact_id}",
+            {"type": contact["type"], "suppressed": body.suppress, "blog_account": bool(contact["blog_account_id"])},
+        )
+    return {"ok": True, "blog_account_id": contact["blog_account_id"]}
 
 
 @router.post("/import")

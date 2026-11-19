@@ -42,6 +42,12 @@ def unsubscribe_url(settings, contact_id, purpose):
     return f"{settings.frontend_origin.rstrip('/')}/unsubscribe/{unsubscribe_token(settings, contact_id, purpose)}"
 
 
+def one_click_unsubscribe_url(settings, contact_id, purpose):
+    """The List-Unsubscribe address. Mail clients POST to it directly (RFC 8058), so it is an API route, not a page."""
+    token = unsubscribe_token(settings, contact_id, purpose)
+    return f"{settings.frontend_origin.rstrip('/')}/api/public/unsubscribe/{token}"
+
+
 def new_form_token():
     token = secrets.token_urlsafe(32)
     return token, hashlib.sha256(token.encode()).hexdigest()
@@ -59,8 +65,12 @@ def hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def send_email(settings, *, to, subject, html, text, unsubscribe, idempotency_key):
-    """Send one message through Resend. Returns Resend's message id. Raises MailError on failure."""
+def send_email(settings, *, to, subject, html, text, unsubscribe, one_click=None, idempotency_key):
+    """Send one message through Resend. Returns Resend's message id. Raises MailError on failure.
+
+    `unsubscribe` is the page linked in the footer; `one_click` is the address mail clients POST to. Without
+    `one_click` (test sends) no List-Unsubscribe header is sent.
+    """
     if not settings.mail_configured:
         raise MailError("mail is not configured")
     body = {
@@ -69,12 +79,13 @@ def send_email(settings, *, to, subject, html, text, unsubscribe, idempotency_ke
         "subject": subject,
         "html": html,
         "text": text,
-        # Lets mail clients show their own one-click unsubscribe button.
-        "headers": {
-            "List-Unsubscribe": f"<{unsubscribe}>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
     }
+    if one_click:
+        # Lets mail clients show their own one-click unsubscribe button (RFC 8058).
+        body["headers"] = {
+            "List-Unsubscribe": f"<{one_click}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        }
     try:
         response = httpx.post(
             f"{settings.resend_api_base.rstrip('/')}/emails",
