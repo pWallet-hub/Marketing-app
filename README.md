@@ -39,20 +39,25 @@ templates with a visual editor, a do-not-contact list, and an activity log. Ever
 | `backend/app/worker.py` | The mail worker. Runs as its own container. |
 | `frontend/` | React app (Vite), served by nginx, which proxies `/api` to the backend |
 | `tools/` | Stand-ins for Resend and the Command Center access check, for local checks only |
-| `docker-compose.yml` | Local stack: Postgres, API, worker, web app |
+| `docker-compose.yml` | The one stack, for production (Coolify) and local: Postgres, API, worker, daily backup, web app |
+| `.env.example` | Every variable, with the local-only block at the end |
 
 ## Run locally
 
-Local values are in `backend/.env.local` (gitignored; copy the variable names from `backend/.env.example` and use local values). They are for this machine only. Real deployments use Coolify variables, as `backend/.env.example` shows.
+There is one compose file. Its defaults are the production ones; a local `.env` (gitignored) switches it to local use.
+
+1. Start the local AFS Command Center first (its Keycloak, backend and network are used for sign-in).
+2. Copy `.env.example` to `.env`, fill in the secrets (the same client secret and service token as Command Center's
+   `MARKETING_*` values) and uncomment the "Local only" block at the end.
+3. Run:
 
 ```bash
 docker compose up -d --build
 ```
 
-- Web app: http://127.0.0.1:8200
+- Web app: http://127.0.0.1:8200 (sign in with AFS SSO)
 - API health: http://127.0.0.1:8200/api/health
-
-Sign-in cannot complete locally: Keycloak and Command Center are not part of this stack.
+- Emails "sent" locally: http://127.0.0.1:8025/log (the fake Resend, started by `COMPOSE_PROFILES=local`; nothing is delivered)
 
 ## Run the tests
 
@@ -75,11 +80,11 @@ See `docs/integrations/deployment.md` in the AFS hub. In short:
 1. Add `marketing` to the hub's Keycloak clients (`keycloak/bootstrap.py`) and seed its application and roles.
 2. Set `MARKETING_OIDC_CLIENT_SECRET`, `MARKETING_REDIRECT_URI`, `MARKETING_ORIGIN` and `AFS_SERVICE_TOKEN_MARKETING` in the hub's environment.
 3. In Coolify, deploy this app as two services (API and web app) on one domain, plus the worker. The API handles `/api`, and the web app handles everything else.
-4. Set the environment from `backend/.env.example`, including the Resend key and sending domain, the Resend webhook secret, and the Biocap and form-target settings when they are ready.
+4. Set the environment from `.env.example` (not its local-only block), including the Resend key and sending domain, the Resend webhook secret, and the Biocap and form-target settings when they are ready.
 
 ## Production
 
-- `docker-compose.prod.yml` sets `ENVIRONMENT=production`. The API and the worker then refuse to start with placeholder or short secrets, a weak database password, plain-HTTP addresses, or Resend configured without its webhook secret. The deploy log lists every problem.
+- `docker-compose.yml` defaults to `ENVIRONMENT=production`. The API and the worker then refuse to start with placeholder or short secrets, a weak database password, plain-HTTP addresses, or Resend configured without its webhook secret. The deploy log lists every problem.
 - Emails carry a one-click `List-Unsubscribe` header (RFC 8058) that points to `/api/public/unsubscribe/<token>`. Gmail and Yahoo require this for bulk mail.
 - Unsubscribe links are signed with `SESSION_SECRET`. Changing it signs everyone out and breaks the unsubscribe links in emails already sent, so keep it stable.
 - The `backup` service writes a `pg_dump` every day to the `backups` volume and keeps 14 days. Copy that volume off the server as well; the restore command is in the compose file.

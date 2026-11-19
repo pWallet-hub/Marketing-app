@@ -1,39 +1,128 @@
-# Local stack for the marketing app: PostgreSQL, the API, the mail worker, and the web app.
-# Keycloak and the AFS hub are not part of it, so sign-in cannot complete here. Everything else can be checked.
+# AFS Marketing Mailer: the one compose file, for production (Coolify) and for local work.
+#
+# Production (Coolify, Docker Compose build pack, compose file /docker-compose.yml): set the variables in Coolify
+# (see .env.example). The defaults below are the production ones: ENVIRONMENT=production refuses placeholder secrets
+# and plain-HTTP addresses, and cookies are HTTPS-only. Give the `frontend` service the domain (port 80); nginx serves
+# the app and proxies /api to the backend, so the SSO callback and the session cookie stay on that one address.
+# Deploy AFS Command Center first: it creates the shared network the backend joins (`afs-internal`).
+#
+# Local: copy .env.example to .env (gitignored) and fill in the "Local" values, then `docker compose up -d --build`.
+# The .env switches to development mode, joins the local Command Center's network and starts the fake Resend.
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  # `marketing-db`, not `db`: the backend is also on the shared network, where another app's `db` could answer.
+  DATABASE_URL: postgresql://marketing:${POSTGRES_PASSWORD}@marketing-db:5432/marketing
+  SESSION_SECRET: ${SESSION_SECRET}
+  SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:-true}
+  # Keycloak: public issuer for the browser and tokens; internal address for server-to-server calls (shared network).
+  # Required: exactly Command Center's KEYCLOAK_PUBLIC_URL (the address in its tokens' issuer).
+  KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL}
+  KEYCLOAK_INTERNAL_URL: ${KEYCLOAK_INTERNAL_URL:-http://afs-keycloak:8080}
+  KEYCLOAK_REALM: ${KEYCLOAK_REALM:-afs}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-marketing}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+  # This app's public address. Frontend and API share it; the SSO callback is PUBLIC_BASE_URL/api/auth/callback.
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+  FRONTEND_ORIGIN: ${PUBLIC_BASE_URL}
+  # AFS Command Center's backend on the shared network. Its /api/internal/ routes are blocked on the public address,
+  # and the host blocks containers from reaching its own public address anyway.
+  COMMAND_CENTER_URL: ${COMMAND_CENTER_URL:-http://afs-command-center-backend:8000}
+  AFS_SERVICE_TOKEN_MARKETING: ${AFS_SERVICE_TOKEN_MARKETING}
+  # Mail (Resend). Without RESEND_API_KEY nothing is sent and campaigns wait in the queue.
+  # RESEND_FROM is a bare address (noreply@...); the display name is RESEND_FROM_NAME.
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM: ${RESEND_FROM:-}
+  RESEND_FROM_NAME: ${RESEND_FROM_NAME:-AFS}
+  RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+  RESEND_API_BASE: ${RESEND_API_BASE:-https://api.resend.com}
+  # Optional integrations: empty means the step is skipped.
+  BIOCAP_ACCOUNT_URL: ${BIOCAP_ACCOUNT_URL:-}
+  BIOCAP_ACCOUNT_TOKEN: ${BIOCAP_ACCOUNT_TOKEN:-}
+  FORM_TARGET_URL: ${FORM_TARGET_URL:-}
+  FORM_TARGET_TOKEN: ${FORM_TARGET_TOKEN:-}
+  # Branding in every email: header name, footer address (expected in marketing email), website, header colour.
+  ORG_NAME: ${ORG_NAME:-Alliance for Science Rwanda}
+  ORG_ADDRESS: ${ORG_ADDRESS:-}
+  ORG_WEBSITE: ${ORG_WEBSITE:-}
+  BRAND_COLOR: ${BRAND_COLOR:-#1f5fbf}
+  # Public pages (unsubscribe, forms): requests per minute per client. Coolify's Traefik and this app's nginx each add
+  # an X-Forwarded-For entry, so the client is 2 from the end (1 locally). Add one for each further proxy (Cloudflare).
+  PUBLIC_RATE_LIMIT: ${PUBLIC_RATE_LIMIT:-30}
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-2}
+  # Days to keep send records and form submissions; 0 keeps them. Set once the retention period is decided.
+  SEND_LOG_RETENTION_DAYS: ${SEND_LOG_RETENTION_DAYS:-0}
+  FORM_SUBMISSION_RETENTION_DAYS: ${FORM_SUBMISSION_RETENTION_DAYS:-0}
+
 services:
   db:
     image: postgres:16
     environment:
       POSTGRES_USER: marketing
-      POSTGRES_PASSWORD: marketing-local
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: marketing
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      default:
+        aliases: [marketing-db]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U marketing -d marketing"]
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   backend:
     build: ./backend
-    env_file: ./backend/.env.local
+    environment: *backend-env
+    expose: ["8000"]
+    # `afs` reaches Command Center (access check on every request) and Keycloak privately; see the networks section.
+    networks: [default, afs]
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:8100:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
       interval: 10s
       timeout: 6s
       retries: 10
-      start_period: 15s
+      start_period: 20s
+    restart: unless-stopped
 
+  # Sends the mail queue through Resend, starts scheduled campaigns and applies retention. Waits for the backend,
+  # which applies the database migrations at startup.
   worker:
     build: ./backend
     command: ["python", "-m", "app.worker"]
-    env_file: ./backend/.env.local
+    environment: *backend-env
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Daily pg_dump into the `backups` volume, keeping 14 days. It protects against mistakes (a wrong import or delete),
+  # not against losing the server: copy the volume off the host as well. Restore:
+  #   docker compose exec -T db pg_restore -U marketing -d marketing --clean --if-exists < marketing-YYYY-MM-DD.dump
+  backup:
+    image: postgres:16
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          day=$$(date +%F)
+          if pg_dump -h marketing-db -U marketing -d marketing -Fc -f /backups/partial.dump; then
+            mv /backups/partial.dump /backups/marketing-$$day.dump && echo "backup written: $$day"
+          else
+            echo "backup FAILED: $$day"
+          fi
+          find /backups -name 'marketing-*.dump' -mtime +14 -delete
+          sleep 86400
+        done
     depends_on:
       db:
         condition: service_healthy
@@ -41,11 +130,34 @@ services:
 
   frontend:
     build: ./frontend
+    expose: ["80"]
+    # Bound to the machine itself only (127.0.0.1), for local use. In production Coolify's proxy routes the domain to
+    # port 80 inside the container; nothing outside the server can reach this binding. Change WEB_PORT if it is taken.
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8200}:80"
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Local only (profile `local`, enabled by COMPOSE_PROFILES=local in .env): a stand-in for Resend that records
+  # messages without delivering them. See them at http://127.0.0.1:8025/log. Never started in production.
+  fake-resend:
+    profiles: [local]
+    image: python:3.12-slim
+    command: ["python", "/tools/fake_resend.py"]
+    volumes:
+      - ./tools:/tools:ro
     ports:
-      - "127.0.0.1:8200:80"
+      - "127.0.0.1:8025:8025"
+
+networks:
+  # Shared with AFS Command Center, which creates it (`afs-internal` in production). Locally, AFS_NETWORK names the
+  # local Command Center's network instead (afs-command-center_default). Only the backend and worker join it.
+  afs:
+    name: ${AFS_NETWORK:-afs-internal}
+    external: true
 
 volumes:
   pgdata:
+  backups:
