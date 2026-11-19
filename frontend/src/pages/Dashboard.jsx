@@ -35,8 +35,8 @@ export default function Dashboard() {
 
       <div className="stats">
         <Stat label="Emails sent" value={e.sent} sub="last 30 days" />
-        <Stat label="Open rate" value={pct(e.open_rate)} sub={`${e.opened} people opened`} rate={e.open_rate} />
-        <Stat label="Click rate" value={pct(e.click_rate)} sub={`${e.clicked} people clicked`} rate={e.click_rate} />
+        <Stat label="Open rate" value={pct(e.open_rate)} sub={`${e.opened} ${e.opened === 1 ? 'person' : 'people'} opened`} rate={e.open_rate} />
+        <Stat label="Click rate" value={pct(e.click_rate)} sub={`${e.clicked} ${e.clicked === 1 ? 'person' : 'people'} clicked`} rate={e.click_rate} />
         <Stat label="Bounce rate" value={pct(e.bounce_rate)} sub={`${e.bounced} bounced`} rate={e.bounce_rate} />
       </div>
 

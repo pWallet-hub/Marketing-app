@@ -248,7 +248,7 @@ export function BarChart({ data, a, b, labelA, labelB, height = 180 }) {
                   <title>{`${d.day}: ${d[b] || 0} ${labelB.toLowerCase()}`}</title>
                 </rect>
               )}
-              {(i % 7 === 0 || i === data.length - 1) && (
+              {((i % 7 === 0 && i < data.length - 4) || i === data.length - 1) && (
                 <text className="axis" x={x + barW} y={height - 6} textAnchor="middle">
                   {new Date(d.day).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
                 </text>

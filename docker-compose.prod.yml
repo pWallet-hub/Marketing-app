@@ -34,6 +34,11 @@ x-backend-env: &backend-env
   BIOCAP_ACCOUNT_TOKEN: ${BIOCAP_ACCOUNT_TOKEN:-}
   FORM_TARGET_URL: ${FORM_TARGET_URL:-}
   FORM_TARGET_TOKEN: ${FORM_TARGET_TOKEN:-}
+  # Branding in every email: header name, footer address (expected in marketing email), website, header colour.
+  ORG_NAME: ${ORG_NAME:-Alliance for Science Rwanda}
+  ORG_ADDRESS: ${ORG_ADDRESS:-}
+  ORG_WEBSITE: ${ORG_WEBSITE:-}
+  BRAND_COLOR: ${BRAND_COLOR:-#1f5fbf}
   # Public pages (unsubscribe, forms): requests per minute per client. Coolify's Traefik and this app's nginx each add
   # an X-Forwarded-For entry, so the client is 2 from the end. Add one for each further proxy (e.g. Cloudflare).
   PUBLIC_RATE_LIMIT: ${PUBLIC_RATE_LIMIT:-30}

@@ -253,10 +253,10 @@ function ReportView({ campaign }) {
       <div className="stats">
         <Stat label="Recipients" value={s.recipients} sub={`${s.skipped} skipped`} />
         <Stat label="Delivered" value={s.delivered} sub={`${s.sent} sent`} />
-        <Stat label="Opened" value={pct(s.open_rate)} sub={`${s.opened} people`} rate={s.open_rate} />
-        <Stat label="Clicked" value={pct(s.click_rate)} sub={`${s.clicked} people`} rate={s.click_rate} />
+        <Stat label="Opened" value={pct(s.open_rate)} sub={`${s.opened} ${s.opened === 1 ? 'person' : 'people'}`} rate={s.open_rate} />
+        <Stat label="Clicked" value={pct(s.click_rate)} sub={`${s.clicked} ${s.clicked === 1 ? 'person' : 'people'}`} rate={s.click_rate} />
         <Stat label="Bounced" value={pct(s.bounce_rate)} sub={`${s.bounced} addresses`} rate={s.bounce_rate} />
-        <Stat label="Unsubscribed" value={pct(s.unsubscribe_rate)} sub={`${s.unsubscribed} people`} rate={s.unsubscribe_rate} />
+        <Stat label="Unsubscribed" value={pct(s.unsubscribe_rate)} sub={`${s.unsubscribed} ${s.unsubscribed === 1 ? 'person' : 'people'}`} rate={s.unsubscribe_rate} />
       </div>
 
       <div className="cols">
@@ -298,7 +298,7 @@ function ReportView({ campaign }) {
                     <Icon name="link" size={16} />
                     <span style={{ minWidth: 0 }}>
                       <a href={l.link} target="_blank" rel="noreferrer" style={{ overflowWrap: 'anywhere' }}>{l.link}</a>
-                      <span className="sub muted small">{l.clicks} clicks by {l.people} people</span>
+                      <span className="sub muted small">{l.clicks} {l.clicks === 1 ? "click" : "clicks"} by {l.people} {l.people === 1 ? "person" : "people"}</span>
                     </span>
                   </li>
                 ))}

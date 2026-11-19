@@ -6,7 +6,18 @@ Design: [DESIGN.md](DESIGN.md). Deployment with Command Center: [deployment.md](
 
 ## What it does
 
-- **Contacts**: add by hand or import a CSV (admins). Types: media, partner, staff.
+The app follows the usual shape of an email-marketing tool: a dashboard, campaigns with reports, contacts and lists,
+templates with a visual editor, a do-not-contact list, and an activity log. Everything below is in the web app.
+
+- **Dashboard**: sends, open, click and bounce rates over 30 days, a daily chart, audience and consent totals, recent and scheduled campaigns.
+- **Campaigns**: create a draft (list, template, type, reply-to), see a live desktop and mobile preview and a ready-to-send checklist, send tests to up to five addresses, then send now or schedule for later (admins). Drafts can be edited, duplicated and deleted. Sent campaigns show a report: delivered, opened, clicked, bounced and unsubscribed, top links, and every recipient with a filter (opened, clicked, not opened, bounced, skipped).
+- **Templates**: start from a design (newsletter, announcement, event, media invite, information request, plain letter), edit in a visual editor (headings, lists, links, buttons, images, dividers, personal fields) or as HTML, with a live preview. Every email is wrapped in the AFS layout: header, preview text, footer with postal address and unsubscribe link. Set the branding with `ORG_NAME`, `ORG_ADDRESS`, `ORG_WEBSITE` and `BRAND_COLOR`.
+- **Lists**: create, rename and delete. Add contacts one by one, or everyone who matches a filter (type, consent, search). Each list shows how many people can receive each type of email.
+- **Do not contact**: every unsubscribe, bounce, complaint and deletion, searchable. Admins can block an address by hand, and lift a manual block or a bounce. Unsubscribes and complaints cannot be lifted.
+- **Activity log** (admins): every change, who made it and when.
+- **Open and click tracking** comes from Resend's webhook (`email.opened`, `email.clicked`). Turn tracking on for the sending domain in Resend.
+
+- **Contacts**: add by hand or import a CSV (admins), edit, filter by type, consent, status and list, export to CSV (admins). Each contact shows their emails, opens and clicks. Types: media, partner, staff.
 - **Consent and suppression**: consent is recorded per purpose (marketing, information requests) with its source. Unsubscribes and bounces stop mail. Withdrawn consent is kept on record.
 - **Lists and templates**: placeholders `{{name}}`, `{{organisation}}`, `{{email}}`, `{{unsubscribe_url}}`, `{{form_url}}`. Unknown placeholders are refused. Values are escaped in HTML.
 - **Campaigns**: draft, test send (admin), send (admin). Recipients are fixed when a campaign is sent. Only people with the right consent who are not suppressed receive it. Skipped recipients are recorded with the reason.

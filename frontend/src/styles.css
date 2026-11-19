@@ -147,6 +147,7 @@ code { font-size: 0.88em; background: var(--card-2); border: 1px solid var(--bor
   background: rgba(255, 255, 255, 0.12); color: #fff; text-transform: uppercase; letter-spacing: 0.04em;
 }
 .mobilebar { display: none; }
+.nav-scrim { display: none; }
 .main { min-width: 0; }
 .content { padding: 24px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
@@ -222,7 +223,7 @@ th { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: 
 tbody tr:hover { background: var(--card-2); }
 tbody tr:last-child td { border-bottom: 0; }
 td { overflow-wrap: anywhere; }
-td .sub { display: block; color: var(--muted); font-size: 0.82rem; }
+.sub { display: block; color: var(--muted); font-size: 0.82rem; }
 .row-link { color: var(--text); font-weight: 600; text-decoration: none; }
 .row-link:hover { color: var(--primary); }
 .selectbar {
