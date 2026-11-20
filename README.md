@@ -39,7 +39,7 @@ templates with a visual editor, a do-not-contact list, and an activity log. Ever
 | `backend/app/worker.py` | The mail worker. Runs as its own container. |
 | `frontend/` | React app (Vite), served by nginx, which proxies `/api` to the backend |
 | `tools/` | Stand-ins for Resend and the Command Center access check, for local checks only |
-| `docker-compose.yml` | The one stack, for production (Coolify) and local: Postgres, API, worker, daily backup, web app |
+| `docker-compose.yaml` | The one stack, for production (Coolify) and local: Postgres, API, worker, daily backup, web app |
 | `.env.example` | Every variable, with the local-only block at the end |
 
 ## Run locally
@@ -84,7 +84,7 @@ See `docs/integrations/deployment.md` in the AFS hub. In short:
 
 ## Production
 
-- `docker-compose.yml` defaults to `ENVIRONMENT=production`. The API and the worker then refuse to start with placeholder or short secrets, a weak database password, plain-HTTP addresses, or Resend configured without its webhook secret. The deploy log lists every problem.
+- `docker-compose.yaml` defaults to `ENVIRONMENT=production`. The API and the worker then refuse to start with placeholder or short secrets, a weak database password, plain-HTTP addresses, or Resend configured without its webhook secret. The deploy log lists every problem.
 - Emails carry a one-click `List-Unsubscribe` header (RFC 8058) that points to `/api/public/unsubscribe/<token>`. Gmail and Yahoo require this for bulk mail.
 - Unsubscribe links are signed with `SESSION_SECRET`. Changing it signs everyone out and breaks the unsubscribe links in emails already sent, so keep it stable.
 - The `backup` service writes a `pg_dump` every day to the `backups` volume and keeps 14 days. Copy that volume off the server as well; the restore command is in the compose file.

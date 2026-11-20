@@ -1,6 +1,6 @@
 # AFS Marketing Mailer: the one compose file, for production (Coolify) and for local work.
 #
-# Production (Coolify, Docker Compose build pack, compose file /docker-compose.yml): set the variables in Coolify
+# Production (Coolify, Docker Compose build pack, compose file /docker-compose.yaml): set the variables in Coolify
 # (see .env.example). The defaults below are the production ones: ENVIRONMENT=production refuses placeholder secrets
 # and plain-HTTP addresses, and cookies are HTTPS-only. Give the `frontend` service the domain (port 80); nginx serves
 # the app and proxies /api to the backend, so the SSO callback and the session cookie stay on that one address.
@@ -153,7 +153,7 @@ services:
 
 networks:
   # Shared with AFS Command Center, which creates it (`afs-internal` in production). Locally, AFS_NETWORK names the
-  # local Command Center's network instead (afs-command-center_default). Only the backend and worker join it.
+  # local Command Center's network instead (afs-command-center_default). Only the backend joins it.
   afs:
     name: ${AFS_NETWORK:-afs-internal}
     external: true
